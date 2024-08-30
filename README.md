@@ -16,10 +16,9 @@ python3 print_cert.py -h
 ````
 ## output:
 ````
-usage: print_cert [-h] [--p12 P12] [--cert CERT] [--privkey PRIVKEY]
-                  [--host HOST] [--port PORT]
+usage: print_cert [-h] [--p12 P12] [--cert CERT] [--privkey PRIVKEY] [--host HOST] [--port PORT] [--no_verify_peer]
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   --p12 P12, -p P12     Path to PKCS12/PFX archive
   --cert CERT, -c CERT  Path to certificate pem
@@ -27,6 +26,7 @@ optional arguments:
                         Path to private key pem
   --host HOST, -H HOST  Host Address
   --port PORT, -P PORT  Host Port (default is 443)
+  --no_verify_peer, -V  Suppress peer (host) certificate validation (see openssl SSL_CTX_set_verify -> SSL_VERIFY_PEER)
 
 ````
 
