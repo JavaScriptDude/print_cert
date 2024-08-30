@@ -1,7 +1,7 @@
 # print_cert
 
 Extract information from SSL Certificates, Private Keys and PKCS12 archives
-Certificates can be retrieved from either files or from a HTTP server over TLSv1
+Certificates can be retrieved from either files or from a HTTP server over TLSv1.2
 
 # Installation
 ````
