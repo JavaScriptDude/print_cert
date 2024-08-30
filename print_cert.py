@@ -14,7 +14,7 @@ from __future__ import print_function
 # .: examples :.
 # % python3 print_cert.py --p12 ./cert_group_0.p12
 # % . this requires env var: P12_PASSWORD=<pkcs12_password>
-# % python3 print_cert.py --host <host>
+# % python3 print_cert.py --host <host_name> [--port <port_number>]
 # % python3 print_cert.py --cert <path_to_certificate_pem>
 # % python3 print_cert.py --pkey <path_to_private_key_pem>
 # .: Other :.
@@ -27,10 +27,9 @@ from __future__ import print_function
 #########################################
 
 import argparse, sys, os, pem
-from OpenSSL import crypto
+from OpenSSL import crypto, SSL
 from sys import argv, stdout
 from socket import socket
-from OpenSSL.SSL import TLSv1_METHOD, Context, Connection
 from pprint import pprint
 
 def main():
@@ -46,6 +45,7 @@ def main():
     parser.add_argument("--privkey", "-k", default=None, type=argparse.FileType("rb"), help="Path to private key pem")
     parser.add_argument("--host", "-H", default=None, type=str, help="Host Address")
     parser.add_argument("--port", "-P", default=443, type=int, help="Host Port (default is 443)")
+    parser.add_argument("--no_verify_peer", "-V", action='store_true', help="Suppress peer (host) certificate validation (see openssl SSL_CTX_set_verify -> SSL_VERIFY_PEER)")
     
     args = parser.parse_args()
 
@@ -53,7 +53,6 @@ def main():
 
     if args.p12: # grabbing from host:port
         
-
         if "P12_PASSWORD" not in os.environ:
             parser.print_help()
             exit("Please set a P12_PASSWORD environment variable with the PFX/PKCS12 password", 1)
@@ -70,18 +69,41 @@ def main():
 
     elif args.host:
 
-        client = socket()
+        _skt = socket()
+        if args.host.lower().find("http") == 0:
+            exit(f"Invalid host address: `{args.host}`. Do not include scheme (http:// or https://)", 1)
 
+        if args.port < 1 or args.port > 65535:
+            exit(f"Invalid port number: {args.port}", 1)
+            
         # Connect over socket
         stdout.flush()
-        client.connect((args.host, args.port))
-        print('Connected to', client.getpeername())
+        try:
+            _skt.connect((args.host, args.port))
+        except Exception as e:
+            exit(f"Error connecting to {args.host}:{args.port}: {e}", 1)
+        # print('Connected to', _skt.getpeername())
 
-        # Do SSL handshake
-        client_ssl = Connection(Context(TLSv1_METHOD), client)
+        # create SSL Context
+        ctx = SSL.Context(SSL.TLSv1_2_METHOD)
+        ctx.set_verify(SSL.VERIFY_NONE if args.no_verify_peer else SSL.VERIFY_PEER)
+
+        # create SSL Connection
+        client_ssl = SSL.Connection(ctx, _skt)
         client_ssl.set_connect_state()
         client_ssl.set_tlsext_host_name(args.host.encode('utf-8'))
-        client_ssl.do_handshake()
+
+        # Do SSL handshake
+        try:
+            client_ssl.do_handshake()
+        except SSL.Error as e:
+            msg = e.args[0]
+            if msg == [('SSL routines', '', 'certificate verify failed')] and args.no_verify_peer == False:
+                exit(f"Certificate verification failed. Consider using --no_verify_peer", 1)
+            else:
+                exit(f"Error during handshake: {msg}", 1)
+        except Exception as e:
+            exit(f"Error during handshake: {e}", 1)
 
         # Get Cert Chain
         chain = client_ssl.get_peer_cert_chain()
@@ -94,6 +116,7 @@ def main():
         # Load certificates
         for i in range(len(chain)):
             chain[i] = crypto.load_certificate(crypto.FILETYPE_PEM, str(chain[i]))
+
 
     elif args.privkey:
 
@@ -185,8 +208,7 @@ def splitPath(s):
     return f, p
 
 def exit(s, exitCode=1):
-    if not s is None:
-        print('Message: {}', s)
+    if s is not None and len(s.strip()) > 0: print(s)
     print('~')
     sys.stdout.flush()
     sys.stderr.flush()
