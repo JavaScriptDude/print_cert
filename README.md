@@ -16,7 +16,7 @@ python3 print_cert.py -h
 ````
 ## output:
 ````
-usage: print_cert [-h] [--p12 P12] [--cert CERT] [--privkey PRIVKEY] [--host HOST] [--port PORT] [--no_verify_peer]
+usage: print_cert [-h] [--p12 P12] [--cert CERT] [--privkey PRIVKEY] [--host HOST] [--port PORT] [--no_verify] [--timeout TIMEOUT]
 
 options:
   -h, --help            show this help message and exit
@@ -26,8 +26,9 @@ options:
                         Path to private key pem
   --host HOST, -H HOST  Host Address
   --port PORT, -P PORT  Host Port (default is 443)
-  --no_verify_peer, -V  Suppress peer (host) certificate validation (see openssl SSL_CTX_set_verify -> SSL_VERIFY_PEER)
-
+  --no_verify, -V       Suppress peer (host) certificate validation (see openssl SSL_CTX_set_verify -> SSL_VERIFY_PEER)
+  --timeout TIMEOUT, -t TIMEOUT
+                        Timeout for --host cert check (default is 3 seconds)
 ````
 
 # Examples
