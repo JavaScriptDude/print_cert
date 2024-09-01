@@ -12,11 +12,11 @@ from __future__ import print_function
 # . python3 -m pip install -r requirements.txt
 # . python3 print_cert.py -h
 # .: examples :.
+# % python3 print_cert.py --host <host_name> [--port <port_number>]
+# % python3 print_cert.py --cert <path_to_certificate_pem> [--pkey <path_to_private_key_pem>]
+# % python3 print_cert.py --pkey <path_to_private_key_pem>
 # % python3 print_cert.py --p12 ./cert_group_0.p12
 # % . this requires env var: P12_PASSWORD=<pkcs12_password>
-# % python3 print_cert.py --host <host_name> [--port <port_number>]
-# % python3 print_cert.py --cert <path_to_certificate_pem>
-# % python3 print_cert.py --pkey <path_to_private_key_pem>
 # .: Other :.
 # Author:Timothy C. Quinn
 # Home: https://github.com/JavaScriptDude/print_cert
