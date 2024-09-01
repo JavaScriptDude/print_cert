@@ -5,7 +5,7 @@ from __future__ import print_function
 #########################################
 # print_cert.py
 # Extract information from SSL Certificates, Private Keys and PKCS12 archives
-# Certificates can be retrieved from either files or from a HTTP server over TLSv1
+# Certificates can be retrieved from either files or from a HTTP server over TLSv1.2
 # .: installation :.
 # . git clone https://github.com/JavaScriptDude/print_cert.git 
 # . cd print_cert
@@ -24,13 +24,20 @@ from __future__ import print_function
 # .: Sources :. 
 #  . https://github.com/lawrenceong/ssl-tools/blob/master/check_certificate_chain.py
 #  . https://www.jhanley.com/google-cloud-extracting-private-key-from-service-account-p12-credentials/
+#  . https://github.com/pyca/pyopenssl/issues/168#issuecomment-638544445
 #########################################
 
-import argparse, sys, os, pem
+import argparse
+import sys
+import os
+import pem
+import socket
+import select
 from OpenSSL import crypto, SSL
-from sys import argv, stdout
 from socket import socket
 from pprint import pprint
+from datetime import datetime
+
 
 def main():
 
@@ -45,12 +52,14 @@ def main():
     parser.add_argument("--privkey", "-k", default=None, type=argparse.FileType("rb"), help="Path to private key pem")
     parser.add_argument("--host", "-H", default=None, type=str, help="Host Address")
     parser.add_argument("--port", "-P", default=443, type=int, help="Host Port (default is 443)")
-    parser.add_argument("--no_verify_peer", "-V", action='store_true', help="Suppress peer (host) certificate validation (see openssl SSL_CTX_set_verify -> SSL_VERIFY_PEER)")
+    parser.add_argument("--no_verify", "-V", action='store_true', help="Suppress peer (host) certificate validation (see openssl SSL_CTX_set_verify -> SSL_VERIFY_PEER)")
+    parser.add_argument("--timeout", "-t", default=3, type=int, help="Timeout for --host cert check (default is 3 seconds)")
     
     args = parser.parse_args()
 
     # print(args); exit("STOP")
 
+    bGetPrivKey:bool=False
     if args.p12: # grabbing from host:port
         
         if "P12_PASSWORD" not in os.environ:
@@ -69,7 +78,8 @@ def main():
 
     elif args.host:
 
-        _skt = socket()
+        _sock = socket()
+        _sock.settimeout(args.timeout)
         if args.host.lower().find("http") == 0:
             exit(f"Invalid host address: `{args.host}`. Do not include scheme (http:// or https://)", 1)
 
@@ -77,36 +87,50 @@ def main():
             exit(f"Invalid port number: {args.port}", 1)
             
         # Connect over socket
-        stdout.flush()
+        sys.stdout.flush()
         try:
-            _skt.connect((args.host, args.port))
+            _sock.connect((args.host, args.port))
         except Exception as e:
-            exit(f"Error connecting to {args.host}:{args.port}: {e}", 1)
-        # print('Connected to', _skt.getpeername())
+            exit(f"Error connecting to {args.host}:{args.port}: {e}. timeout = {args.timeout}s", 1)
 
         # create SSL Context
         ctx = SSL.Context(SSL.TLSv1_2_METHOD)
-        ctx.set_verify(SSL.VERIFY_NONE if args.no_verify_peer else SSL.VERIFY_PEER)
+        if args.no_verify: ctx.set_verify(SSL.VERIFY_NONE)
+        # Note - SSL.VERIFY_PEER and other flags all fail for all domains tested 
+        # including google.com so don't use them unless you know what you're doing
 
         # create SSL Connection
-        client_ssl = SSL.Connection(ctx, _skt)
-        client_ssl.set_connect_state()
-        client_ssl.set_tlsext_host_name(args.host.encode('utf-8'))
+        _ctx = SSL.Connection(ctx, _sock)
+        _ctx.set_connect_state()
+        _ctx.set_tlsext_host_name(args.host.encode('utf-8'))
 
         # Do SSL handshake
-        try:
-            client_ssl.do_handshake()
-        except SSL.Error as e:
-            msg = e.args[0]
-            if msg == [('SSL routines', '', 'certificate verify failed')] and args.no_verify_peer == False:
-                exit(f"Certificate verification failed. Consider using --no_verify_peer", 1)
-            else:
-                exit(f"Error during handshake: {msg}", 1)
-        except Exception as e:
-            exit(f"Error during handshake: {e}", 1)
+        # Code borrowed from https://github.com/pyca/pyopenssl/issues/168#issuecomment-638544445
+        # This code is required to support socket timeouts
+        while True:
+            try:
+                _ctx.do_handshake()
+            except SSL.WantReadError:
+                rd, _, _ = select.select([_sock], [], [], _sock.gettimeout())
+                if not rd:
+                    raise socket.timeout('select timed out')
+                continue
+            except SSL.Error as e:
+                msg = e.args[0]
+                if msg == [('SSL routines', '', 'certificate verify failed')] and args.no_verify == False:
+                    exit(f"Certificate verification failed. Consider using --no_verify", 1)
+                else:
+                    exit(f"Error during handshake: {msg}", 1)
+            except Exception as e:
+                exit(f"Error during handshake: {e}", 1)
+
+            break
+
 
         # Get Cert Chain
-        chain = client_ssl.get_peer_cert_chain()
+        chain = _ctx.get_peer_cert_chain()
+
+        _ctx.close()
 
 
     elif args.cert:
@@ -117,9 +141,17 @@ def main():
         for i in range(len(chain)):
             chain[i] = crypto.load_certificate(crypto.FILETYPE_PEM, str(chain[i]))
 
+        bGetPrivKey = True if args.privkey else False
 
     elif args.privkey:
+        bGetPrivKey = True
 
+    else:
+        parser.print_help()
+        exit("Missing parameter(s). Please specify one of --host, --cert or --p12", 1)
+
+
+    if bGetPrivKey:
         # Reading Bytes
         filebytes = args.privkey.read()
         args.privkey.close()
@@ -127,21 +159,13 @@ def main():
         # Loading Private Key
         pkey = crypto.load_privatekey(crypto.FILETYPE_PEM, filebytes)
 
-
-    else:
-        parser.print_help()
-        exit("Missing parameter(s). Please specify one of --host, --cert or --p12", 1)
-
-        
     # Start printing output
-    if args.privkey:
+    if args.privkey and not(args.cert):
         fname,fpath = splitPath(args.privkey.name)
         check: str
         try:
             pkey.check()
             check = "(ok)"
-        except crypto.error:
-            check = "Got <OpenSSL.crypto.Error> - Key is inconsistent"
         except TypeError:
             check = "Key is of a type which cannot be checked. Only RSA keys can currently be checked"
         except Exception as e:
@@ -162,21 +186,26 @@ def main():
             print("- [file path]:\t{}".format(fpath))
             print("- [file name]:\t{}".format(fname))
 
-        print("\n>> Certificate Chain:\n")
-        i = 0
-        for cert in reversed(chain):
-            i += 1
-            asterisks = "*" * i
-            print(" [+] {:<10} {}".format(asterisks, cert.get_subject()))
+        if len(chain) > 1:
+            print("\n>> Full Chain:\n")
+            for (i, cert) in enumerate(reversed(chain)):
+                asterisks = "*" * i
+                print(" [+] {:<10} {}".format(asterisks, cert.get_subject()))
 
-        print("\n>> Certificate Details:\n")
+        
         for cert in reversed(chain):
             pkey = cert.get_pubkey()
+
+            com_name = ''.join([ 
+                    f"/{k.decode('UTF-8')}={v.decode('UTF-8')}" 
+                    for (k,v) in cert.get_subject().get_components()])
+            
+            print('\n' + ("." * 80))
+            print(f"\n>> Certificate for {com_name}:")
             print("." * 80)
-            print("- [Subject]:\t\t{}".format(cert.get_subject()))
             print("- [Issuer]:\t\t{}".format(cert.get_issuer()))
-            print("- [Valid from]:\t\t{}".format(cert.get_notBefore()))
-            print("- [Valid until]:\t{}".format(cert.get_notAfter()))
+            print("- [Valid from]:\t\t{}".format(_ssl_date(cert.get_notBefore())))
+            print("- [Valid until]:\t{}".format(_ssl_date(cert.get_notAfter())))
             print("- [Has Expired]:\t{}".format(cert.has_expired()))
             
             # Cert Extensions:
@@ -189,8 +218,6 @@ def main():
                 ))
 
     print("\n")
-    if args.host:
-        client_ssl.close()
 
     return 0
 
@@ -206,6 +233,12 @@ def splitPath(s):
     f = os.path.basename(s)
     p = s[:-(len(f))-1]
     return f, p
+
+def _utf8_d(bytes):
+    return bytes.decode("UTF-8")
+
+def _ssl_date(d_bytes):
+    return datetime.strptime(_utf8_d(d_bytes), '%Y%m%d%H%M%SZ').strftime('%Y-%m-%d %H:%M:%S UTC')
 
 def exit(s, exitCode=1):
     if s is not None and len(s.strip()) > 0: print(s)
